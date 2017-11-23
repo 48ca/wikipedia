@@ -4,7 +4,7 @@ project(wikipedia)
 find_package(CURL REQUIRED)
 find_package(Threads)
 
-set (CMAKE_CXX_STANDARD 14)
+set (CMAKE_CXX_STANDARD 17)
 
 if(MSVC)
 	# Visual Studio -- /W4

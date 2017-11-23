@@ -29,7 +29,7 @@ class SafeQueue {
     };
     ~SafeQueue() {};
 
-    void push(T item) {
+    void push(const T& item) {
         std::lock_guard<std::mutex> lk(queue_mutex);
         queue.emplace_back(item);
         cond.notify_one();
@@ -69,6 +69,25 @@ class SafeSet {
   public:
     SafeSet() {};
     ~SafeSet() {};
+
+    void add(const T& element) {
+        std::lock_guard<std::mutex> lk(set_mutex);
+        set.insert(element);
+    }
+    bool contains(const T& element) {
+        std::lock_guard<std::mutex> lk(set_mutex);
+        auto got = set.find(element);
+        return got != set.end();
+    }
+    bool if_not_contains_add(const T& element) {
+        std::lock_guard<std::mutex> lk(set_mutex);
+        auto got = set.find(element);
+        if(got == set.end()) {
+            set.insert(element);
+            return true;
+        }
+        return false;
+    }
 };
 
 #endif // SAFETYPES_H
