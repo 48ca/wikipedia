@@ -30,8 +30,8 @@ SafeQueue<std::vector<std::string>> pull_queue(0);
 SafeQueue<std::pair<std::vector<std::string>, std::string>> parse_queue(1);
 SafeSet<std::string> url_set;
 
-std::string source_path = "/wiki/Brandon_Flowers";
-std::string dest_path =   "/wiki/ABBA";
+std::string source_path = "/wiki/GitHub";
+std::string dest_path =   "/wiki/Linus_Torvalds";
 
 void print_vec(std::vector<std::string> v) {
     std::string s = "[ ";
@@ -99,7 +99,7 @@ retry:
     }
 }
 
-const std::regex ANCHOR_REGEX("<a[^>]*href=[\"'](/[^/][\\w?/\\.=&:]+)[\"'][^>]*>", std::regex_constants::icase | std::regex_constants::ECMAScript);
+const std::regex ANCHOR_REGEX("<a[^>]*href=[\"'](/[^/][\\w%?/\\(\\)\\.=&:]+)[\"'][^>]*>", std::regex_constants::icase | std::regex_constants::ECMAScript);
 void parse() {
     const auto matches_end = std::sregex_iterator();
     while(searching) {
