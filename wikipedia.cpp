@@ -99,7 +99,9 @@ retry:
     }
 }
 
-const std::regex ANCHOR_REGEX("<a[^>]*href=[\"'](/[^/][\\w%?/\\(\\)\\.=&:]+)[\"'][^>]*>", std::regex_constants::icase | std::regex_constants::ECMAScript);
+// This regular expression only looks for /wiki pages and
+// discards most Wikipedia meta pages (e.g. /wiki/Help: articles)
+const std::regex ANCHOR_REGEX("<a[^>]*href=[\"'](\\/wiki\\/(?:(?!Wikipedia:)(?!File:)(?!Help:)(?!Template:))[\\w%?/\\(\\)\\.=&:]+)[\"'][^>]*>", std::regex_constants::icase | std::regex_constants::ECMAScript);
 void parse() {
     const auto matches_end = std::sregex_iterator();
     while(searching) {
