@@ -20,13 +20,9 @@ class SafeQueue {
 
     std::mutex cond_mutex;
     std::condition_variable cond;
-    unsigned id;
 
   public:
-    SafeQueue(unsigned id) {
-        this->id = id;
-        log("Starting queue " + std::to_string(id));
-    };
+    SafeQueue() {};
     ~SafeQueue() {};
 
     void push(const T& item) {
@@ -39,10 +35,23 @@ class SafeQueue {
         cond.notify_all();
     };
 
+    unsigned size(void) {
+        std::lock_guard<std::mutex> lk(queue_mutex);
+        return queue.size();
+    };
+
     T wait_for_element() {
         T front;
         if(!searching)
             return front;
+        {
+            std::lock_guard<std::mutex> queue_lock(queue_mutex);
+            if(queue.size() > 0) {
+                front = queue.front();
+                queue.pop_front();
+                return front;
+            }
+        }
         std::unique_lock<std::mutex> lk(cond_mutex);
         cond.wait(lk, [this, &front]{
             if(!searching)
@@ -87,6 +96,10 @@ class SafeSet {
             return true;
         }
         return false;
+    }
+    unsigned size(void) {
+        std::lock_guard<std::mutex> lk(set_mutex);
+        return set.size();
     }
 };
 

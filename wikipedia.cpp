@@ -19,19 +19,22 @@
 
 const std::string WIKIPEDIA_DOMAIN = "https://en.wikipedia.org";
 
-const unsigned num_pull_threads = 64;
+const unsigned num_pull_threads = 8;
 const unsigned num_parse_threads = 4;
 
 std::mutex final_notify;
 std::atomic<bool> searching;
 std::condition_variable notify_main_thread;
 
-SafeQueue<std::vector<std::string>> pull_queue(0);
-SafeQueue<std::pair<std::vector<std::string>, std::string>> parse_queue(1);
+SafeQueue<std::vector<std::string>> pull_queue;
+SafeQueue<std::pair<std::vector<std::string>, std::string>> parse_queue;
 SafeSet<std::string> url_set;
 
 std::string source_path = "/wiki/GitHub";
 std::string dest_path =   "/wiki/Linus_Torvalds";
+
+std::atomic<uint16_t> fetched;
+std::atomic<uint16_t> parsed;
 
 void print_vec(std::vector<std::string> v) {
     std::string s = "[ ";
@@ -42,14 +45,13 @@ void print_vec(std::vector<std::string> v) {
 }
 
 void stop() {
-    if(searching.load(std::memory_order_acquire) == false)
+    if(searching.load(std::memory_order_relaxed) == false)
         return;
     std::lock_guard<std::mutex> lk(final_notify);
-    searching.store(false, std::memory_order_release);
+    searching.store(false, std::memory_order_relaxed);
     notify_main_thread.notify_one();
     pull_queue.notify_all();
     parse_queue.notify_all();
-    log("WARNING: Waiting for all threads to stop");
 }
 
 size_t writedata(char* ptr, size_t size, size_t nmemb, void* userdata) {
@@ -70,16 +72,13 @@ void pull() {
 retry:
         if(!searching)
             return;
-        // log("Pull thread " + std::to_string(id) + " got data");
-        // log(s);
 
         curl = curl_easy_init();
         if(!curl) {
             log("Unable to setup cURL");
             continue;
         }
-        // log(std::to_string(id) + " Pulling URL " + WIKIPEDIA_DOMAIN + s);
-        log(WIKIPEDIA_DOMAIN + s);
+        // llog(WIKIPEDIA_DOMAIN + s);
         curl_easy_setopt(curl, CURLOPT_URL, (WIKIPEDIA_DOMAIN + s).c_str());
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writedata);
@@ -96,6 +95,7 @@ retry:
         } else {
             parse_queue.push(std::pair<std::vector<std::string>, std::string>(vec, stream.str()));
         }
+        fetched.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -105,19 +105,18 @@ const std::regex ANCHOR_REGEX("<a[^>]*href=[\"'](\\/wiki\\/(?:(?!Wikipedia:)(?!F
 void parse() {
     const auto matches_end = std::sregex_iterator();
     while(searching) {
-        auto [ from, body ] = parse_queue.wait_for_element();
+        auto pair = parse_queue.wait_for_element();
+        auto const& from = pair.first;
+        auto const& body = pair.second;
         if(!searching)
             return;
-        // log("Parse thread " + std::to_string(id) + " got data");
         auto matches_begin  = std::sregex_iterator(body.begin(), body.end(), ANCHOR_REGEX);
         for(std::sregex_iterator i = matches_begin; i != matches_end; ++i) {
             std::smatch sm = *i;
             std::smatch::iterator it = sm.begin();
             for(std::advance(it, 1); it != sm.end(); advance(it, 1)) {
                 auto from_copy = from;
-                // log(std::to_string(id) + " Pushing: " + std::string(*it));
                 if(*it == dest_path) {
-                    // log(std::to_string(id) + " FOUND DESTINATION: " + dest_path + " WHILE PARSING " + from.back());
                     from_copy.emplace_back(*it);
                     print_vec(from_copy);
                     stop();
@@ -129,6 +128,7 @@ void parse() {
                 }
             }
         }
+        parsed.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -150,12 +150,39 @@ int handle(int argc, char** argv) {
     }
 }
 
+void info(void) {
+    fetched = 0;
+    parsed = 0;
+    {
+        std::lock_guard<std::mutex> lk(io_mutex);
+        std::cout << "Parsed links per second:  working...\n"
+                  << "Fetched links per second: working...\n"
+                  << "Number of known pages:    working...\n"
+                  << "Size of pull queue:       working...\n"
+                  << "Size of parse queue:      working...\n";
+    }
+    while(true) {
+        if(!searching) return;
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        if(!searching) return;
+        auto fetched_copy = fetched.exchange(0, std::memory_order_relaxed);
+        auto parsed_copy = parsed.exchange(0, std::memory_order_relaxed);
+        std::lock_guard<std::mutex> lk(io_mutex);
+        std::cout << "\033[F\033[F\033[F\033[F\033[F";
+        std::cout << "Parsed links per second:    " << parsed_copy << "               \n"
+                  << "Fetched links per second:   " << fetched_copy << "              \n"
+                  << "Number of known pages:      " << url_set.size() << "            \n"
+                  << "Size of pull queue:         " << pull_queue.size() << "         \n"
+                  << "Size of parse queue:        " << parse_queue.size() << "        \n";
+    }
+}
+
 int main(int argc, char** argv) {
 
     if(handle(argc, argv))
         return 1;
 
-    searching.store(true, std::memory_order_release);
+    searching.store(true, std::memory_order_relaxed);
 
     std::vector<std::thread> pull_threads;
     for(unsigned i = 0; i < num_pull_threads; ++i)
@@ -165,25 +192,20 @@ int main(int argc, char** argv) {
     for(unsigned i = 0; i < num_parse_threads; ++i)
         parse_threads.emplace_back(parse);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::thread info_thread(info);
 
-    log("Waiting to start");
     pull_queue.push(std::vector<std::string>{source_path});
-    log("Started");
 
     std::unique_lock<std::mutex> lk(final_notify);
     notify_main_thread.wait(lk, []{
         return !searching; // keep waiting if we're still searching
     });
 
-    for(unsigned i = 0; i < num_pull_threads; ++i) {
+    for(unsigned i = 0; i < num_pull_threads; ++i)
         pull_threads[i].join();
-        // log("Pull thread " + std::to_string(i) + " stopped");
-    }
-    for(unsigned i = 0; i < num_parse_threads; ++i) {
+    for(unsigned i = 0; i < num_parse_threads; ++i)
         parse_threads[i].join();
-        // log("Parse thread " + std::to_string(i) + " stopped");
-    }
+    info_thread.join();
 
     return 0;
 
