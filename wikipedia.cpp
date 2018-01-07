@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <cstring>
 
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 #include <condition_variable>
@@ -84,24 +85,24 @@ retry:
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writedata);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &stream);
         res = curl_easy_perform(curl);
-        curl_easy_cleanup(curl);
         if(res) {
-            /*
-            log(std::to_string(id) + " While attempting to pull: " + WIKIPEDIA_DOMAIN + s);
-            log(std::to_string(id) + " Code: " + std::to_string(res));
-            log(std::to_string(id) + " Error: " + std::string(curl_easy_strerror(res)));
-            */
+            log("While attempting to pull: " + WIKIPEDIA_DOMAIN + s, std::cerr);
+            log("Code: " + std::to_string(res), std::cerr);
+            log("Error: " + std::string(curl_easy_strerror(res)), std::cerr);
             goto retry;
         } else {
             parse_queue.push(std::pair<std::vector<std::string>, std::string>(vec, stream.str()));
         }
+        curl_easy_cleanup(curl);
         fetched.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
 // This regular expression only looks for /wiki pages and
 // discards most Wikipedia meta pages (e.g. /wiki/Help: articles)
-const std::regex ANCHOR_REGEX("<a[^>]*href=[\"'](\\/wiki\\/(?:(?!Wikipedia:)(?!File:)(?!Help:)(?!Template:))[\\w%?/\\(\\)\\.=&:]+)[\"'][^>]*>", std::regex_constants::icase | std::regex_constants::ECMAScript);
+const std::regex ANCHOR_REGEX("<a[^>]*href=[\"'](\\/wiki\\/(?:(?!Wikipedia:)(?!File:)(?!Help:)(?!Template:))[\\w-%?/\\(\\)\\.=&:@;*'!\\[\\]#,\\$\\+]+)[\"'][^>]*>", std::regex_constants::icase | std::regex_constants::ECMAScript);
+const std::regex PAGE_NAME_REGEX("\"wgPageName\":\"([\\w-%?/\\(\\)\\.=&:@;*'!\\[\\]#,\\$\\+]+)\"", std::regex_constants::icase | std::regex_constants::ECMAScript);
+const std::string WIKI_STRING = "/wiki/";
 void parse() {
     const auto matches_end = std::sregex_iterator();
     while(searching) {
@@ -110,11 +111,31 @@ void parse() {
         auto const& body = pair.second;
         if(!searching)
             return;
+        /* Check the pageName (in case of redirects) */
+        if(std::equal(WIKI_STRING.begin(), WIKI_STRING.end(), from.back().begin())) { // normal wiki page
+            auto matches_begin = std::sregex_iterator(body.begin(), body.end(), PAGE_NAME_REGEX);
+            for(std::sregex_iterator i = matches_begin; i != matches_end; ++i) {
+                std::smatch sm = *i;
+                std::smatch::iterator pn_it = sm.begin();
+                auto const dest_nowiki = dest_path.substr(6);
+                for(std::advance(pn_it, 1); pn_it != sm.end(); std::advance(pn_it, 1)) {
+                    const std::string s = *pn_it;
+                    if(std::equal(dest_nowiki.begin(), dest_nowiki.end(), s.begin())) {
+                        log("Found pageName match", std::cerr);
+                        print_vec(from);
+                        stop();
+                        return;
+                    }
+                }
+            }
+        }
+
+        /* Check all anchors */
         auto matches_begin  = std::sregex_iterator(body.begin(), body.end(), ANCHOR_REGEX);
         for(std::sregex_iterator i = matches_begin; i != matches_end; ++i) {
             std::smatch sm = *i;
             std::smatch::iterator it = sm.begin();
-            for(std::advance(it, 1); it != sm.end(); advance(it, 1)) {
+            for(std::advance(it, 1); it != sm.end(); std::advance(it, 1)) {
                 auto from_copy = from;
                 if(*it == dest_path) {
                     from_copy.emplace_back(*it);

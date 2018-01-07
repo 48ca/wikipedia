@@ -4,13 +4,14 @@
 
 #include <mutex>
 #include <iostream>
+#include <ostream>
 
 std::mutex io_mutex;
 
-void log(std::string message)
+void log(std::string message, std::ostream& out=std::cout)
 {
     std::lock_guard<std::mutex> lock(io_mutex);
-    std::cout << message << std::endl;
+    out << message << std::endl;
 }
 
 #endif // LOGGING_H
